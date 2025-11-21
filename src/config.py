@@ -44,7 +44,7 @@ SEVERITY_CLASS_LABELS = {
     'severe': 2
 }
 
-MODEL_ARCHITECTURES = [
+SEVERITY_MODEL_ARCHITECTURES = [
     'simple_cnn',
     'vgg_style',
     'resnet_style',

@@ -3,7 +3,6 @@ import os
 ################################### Paths ###################################
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, 'Data')
-
 SEVERITY_DATA_DIR = os.path.join(DATA_DIR, 'Damage Severity Datasets', '1')
 SEVERITY_TRAIN_DIR = os.path.join(SEVERITY_DATA_DIR, 'training')
 SEVERITY_VAL_DIR = os.path.join(SEVERITY_DATA_DIR, 'validation')
@@ -44,6 +43,7 @@ SEVERITY_CLASS_LABELS = {
     'severe': 2
 }
 
+# Model architectures to compare
 SEVERITY_MODEL_ARCHITECTURES = [
     'simple_cnn',
     'vgg_style',

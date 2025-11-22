@@ -17,7 +17,7 @@ def get_callbacks(model_name, log_dir=None):
     os.makedirs(config.LOGS_DIR, exist_ok=True)
     
     # Model checkpoint - save best model
-    checkpoint_path = os.path.join(config.MODELS_DIR, f'{model_name}_best.h5')
+    checkpoint_path = os.path.join(config.MODELS_DIR, f'{model_name}_best.keras')
     checkpoint = ModelCheckpoint(
         checkpoint_path,
         monitor='val_accuracy',
@@ -114,8 +114,21 @@ def evaluate_model(model, generator):
     results = model.evaluate(generator, verbose=1)
     
     metrics = {}
-    for i, metric_name in enumerate(model.metrics_names):
-        metrics[metric_name] = float(results[i])
+    if isinstance(results, list):
+        # TensorFlow 2.x returns a list
+        for i, metric_name in enumerate(model.metrics_names):
+            metrics[metric_name] = float(results[i])
+    else:
+        # Single value (loss only)
+        metrics['loss'] = float(results)
+    
+    # Handle different metric naming conventions
+    # Ensure 'accuracy' key exists (might be 'categorical_accuracy' or similar)
+    if 'accuracy' not in metrics:
+        for key in metrics.keys():
+            if 'accuracy' in key.lower():
+                metrics['accuracy'] = metrics[key]
+                break
     
     return metrics
 

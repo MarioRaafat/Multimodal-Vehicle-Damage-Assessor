@@ -12,9 +12,10 @@ import config
 
 def create_simple_cnn():
     model = models.Sequential([
+        # Input layer
+        layers.Input(shape=config.INPUT_SHAPE),
         # Block 1
-        layers.Conv2D(32, (3, 3), activation='relu', padding='same', 
-                     input_shape=config.INPUT_SHAPE),
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
         layers.BatchNormalization(),
         layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
         layers.BatchNormalization(),
@@ -56,9 +57,10 @@ def create_vgg_style():
     VGG-style architecture with deeper convolutional blocks
     """
     model = models.Sequential([
+        # Input layer
+        layers.Input(shape=config.INPUT_SHAPE),
         # Block 1
-        layers.Conv2D(64, (3, 3), activation='relu', padding='same',
-                     input_shape=config.INPUT_SHAPE),
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
         layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
         layers.MaxPooling2D((2, 2)),
         layers.BatchNormalization(),

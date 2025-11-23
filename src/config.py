@@ -43,13 +43,23 @@ SEVERITY_CLASS_LABELS = {
     'severe': 2
 }
 
-# Model architectures to compare
+# Model architectures to compare (custom models)
 SEVERITY_MODEL_ARCHITECTURES = [
     'simple_cnn',
     'vgg_style',
     'resnet_style',
     'efficientnet_b0',
     'mobilenet_v2'
+]
+
+# Pre-trained model architectures (RECOMMENDED - better performance)
+PRETRAINED_MODEL_ARCHITECTURES = [
+    'efficientnet_b3',    # Best overall efficiency
+    'resnet50',           # Industry standard
+    'densenet121',        # Efficient parameters
+    'inceptionv3',        # Multi-scale features
+    'xception',           # Depthwise separable convolutions
+    'convnext_tiny',      # Modern CNN architecture
 ]
 
 ################################### Other Settings ###################################

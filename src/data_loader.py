@@ -5,7 +5,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.utils import to_categorical
 import config
 
-def create_data_generators():
+def create_data_generators(workers=1, use_multiprocessing=False, max_queue_size=10):
     # Training data augmentation
     train_datagen = ImageDataGenerator(
         rescale=1./255,

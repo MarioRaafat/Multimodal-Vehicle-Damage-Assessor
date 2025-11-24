@@ -21,9 +21,14 @@ INPUT_SHAPE = (IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS)
 
 # Training parameters
 BATCH_SIZE = 32
-EPOCHS = 50
-LEARNING_RATE = 0.001
+EPOCHS = 150
+INITIAL_LEARNING_RATE = 0.0001  # Lower for fine-tuning pretrained models
 VALIDATION_SPLIT = 0.2
+
+# Fine-tuning parameters
+UNFREEZE_LAYERS = 50  # Number of layers to unfreeze from the top
+FINE_TUNE_EPOCHS = 30  # Additional epochs for fine-tuning
+FINE_TUNE_LR = 0.00001  # Lower learning rate for fine-tuning
 
 # Data augmentation parameters
 ROTATION_RANGE = 20
@@ -53,14 +58,36 @@ SEVERITY_MODEL_ARCHITECTURES = [
 ]
 
 # Pre-trained model architectures (RECOMMENDED - better performance)
-PRETRAINED_MODEL_ARCHITECTURES = [
-    'efficientnet_b3',    # Best overall efficiency
-    'resnet50',           # Industry standard
-    'densenet121',        # Efficient parameters
-    'inceptionv3',        # Multi-scale features
-    'xception',           # Depthwise separable convolutions
-    'convnext_tiny',      # Modern CNN architecture
-]
+PRETRAINED_MODELS = {
+    'efficientnet_b4': {
+        'input_size': (380, 380),
+        'description': 'Best accuracy/efficiency tradeoff',
+        'params': '19M'
+    },
+    'resnet50v2': {
+        'input_size': (224, 224),
+        'description': 'Industry standard, reliable',
+        'params': '25M'
+    },
+    'mobilenet_v2': {
+        'input_size': (224, 224),
+        'description': 'Lightweight, fast inference',
+        'params': '3.5M'
+    },
+    'densenet121': {
+        'input_size': (224, 224),
+        'description': 'Efficient feature reuse',
+        'params': '8M'
+    },
+    'inceptionv3': {
+        'input_size': (299, 299),
+        'description': 'Multi-scale feature extraction',
+        'params': '23M'
+    }
+}
+
+# Default models to train (can be modified)
+MODELS_TO_TRAIN = ['efficientnet_b4', 'resnet50v2', 'densenet121', 'mobilenet_v2', 'inceptionv3']
 
 ################################### Other Settings ###################################
 # Random seed for reproducibility

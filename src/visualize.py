@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 from sklearn.metrics import (
     confusion_matrix,
     classification_report,
@@ -10,6 +11,7 @@ from sklearn.metrics import (
     precision_recall_curve
 )
 from sklearn.preprocessing import label_binarize
+from itertools import cycle
 import config
 
 
@@ -310,5 +312,183 @@ def plot_all_confusion_matrices(model_results, save_dir=None):
         save_path = os.path.join(save_dir, 'all_confusion_matrices.png')
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"All confusion matrices saved to: {save_path}")
+    
+    return fig
+
+
+def plot_model_comparison_table(model_results, save_dir=None):
+    """
+    Create a comparison table of all models
+    
+    Args:
+        model_results: Dictionary with model names as keys and results as values
+        save_dir: Directory to save table
+        
+    Returns:
+        DataFrame with comparison results
+    """
+    comparison_data = []
+    
+    for model_name, results in model_results.items():
+        row = {
+            'Model': model_name,
+            'Accuracy': results.get('accuracy', 0),
+            'Precision': results.get('precision', 0),
+            'Recall': results.get('recall', 0),
+            'F1-Score': results.get('f1_score', 0),
+            'AUC': results.get('auc', 0)
+        }
+        comparison_data.append(row)
+    
+    df = pd.DataFrame(comparison_data)
+    df = df.sort_values('Accuracy', ascending=False).reset_index(drop=True)
+    
+    # Create visualization
+    fig, ax = plt.subplots(figsize=(14, len(df) * 0.6 + 2))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    # Create table
+    table_data = []
+    for idx, row in df.iterrows():
+        table_row = [
+            row['Model'],
+            f"{row['Accuracy']:.4f}",
+            f"{row['Precision']:.4f}",
+            f"{row['Recall']:.4f}",
+            f"{row['F1-Score']:.4f}",
+            f"{row['AUC']:.4f}"
+        ]
+        table_data.append(table_row)
+    
+    table = ax.table(
+        cellText=table_data,
+        colLabels=['Model', 'Accuracy', 'Precision', 'Recall', 'F1-Score', 'AUC'],
+        cellLoc='center',
+        loc='center',
+        colWidths=[0.3, 0.14, 0.14, 0.14, 0.14, 0.14]
+    )
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 2)
+    
+    # Style header
+    for i in range(len(df.columns)):
+        table[(0, i)].set_facecolor('#4CAF50')
+        table[(0, i)].set_text_props(weight='bold', color='white')
+    
+    # Style best model row
+    for i in range(len(df.columns)):
+        table[(1, i)].set_facecolor('#E8F5E9')
+    
+    plt.title('Model Performance Comparison', fontsize=14, fontweight='bold', pad=20)
+    
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, 'model_comparison_table.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Model comparison table saved to: {save_path}")
+        
+        # Save as CSV
+        csv_path = os.path.join(save_dir, 'model_comparison.csv')
+        df.to_csv(csv_path, index=False)
+        print(f"Model comparison CSV saved to: {csv_path}")
+    
+    return df, fig
+
+
+def plot_per_class_performance(model_results, save_dir=None):
+    """
+    Plot per-class performance for all models
+    
+    Args:
+        model_results: Dictionary with model names as keys and results as values
+        save_dir: Directory to save plots
+    """
+    model_names = list(model_results.keys())
+    class_names = config.SEVERITY_CLASS_NAMES
+    
+    # Extract per-class metrics
+    metrics = ['precision', 'recall', 'f1_score']
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig.suptitle('Per-Class Performance Comparison', fontsize=16, fontweight='bold')
+    
+    for metric_idx, metric in enumerate(metrics):
+        ax = axes[metric_idx]
+        
+        # Prepare data for grouped bar chart
+        x = np.arange(len(class_names))
+        width = 0.8 / len(model_names)
+        
+        for model_idx, model_name in enumerate(model_names):
+            if 'per_class_metrics' in model_results[model_name]:
+                values = []
+                for class_name in class_names:
+                    class_metrics = model_results[model_name]['per_class_metrics'].get(class_name, {})
+                    values.append(class_metrics.get(metric, 0))
+                
+                offset = width * (model_idx - len(model_names)/2 + 0.5)
+                ax.bar(x + offset, values, width, label=model_name, alpha=0.8)
+        
+        ax.set_xlabel('Damage Severity Class', fontsize=12)
+        ax.set_ylabel(metric.replace('_', ' ').title(), fontsize=12)
+        ax.set_title(f'{metric.replace("_", " ").title()} by Class', fontsize=14)
+        ax.set_xticks(x)
+        ax.set_xticklabels(class_names)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim([0, 1.05])
+    
+    plt.tight_layout()
+    
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, 'per_class_performance.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Per-class performance plot saved to: {save_path}")
+    
+    return fig
+
+
+def create_comprehensive_report(model_results, save_dir=None):
+    """
+    Create a comprehensive report with all visualizations
+    
+    Args:
+        model_results: Dictionary with model names as keys and results as values
+        save_dir: Directory to save all plots
+    """
+    if save_dir is None:
+        save_dir = config.RESULTS_DIR
+    
+    os.makedirs(save_dir, exist_ok=True)
+    
+    print("\n" + "="*60)
+    print("GENERATING COMPREHENSIVE REPORT")
+    print("="*60)
+    
+    # 1. Model comparison
+    print("\n1. Creating model comparison...")
+    compare_models(model_results, save_dir)
+    
+    # 2. Comparison table
+    print("\n2. Creating comparison table...")
+    plot_model_comparison_table(model_results, save_dir)
+    
+    # 3. All confusion matrices
+    print("\n3. Creating confusion matrices...")
+    plot_all_confusion_matrices(model_results, save_dir)
+    
+    # 4. Per-class performance
+    print("\n4. Creating per-class performance plots...")
+    plot_per_class_performance(model_results, save_dir)
+    
+    print("\n" + "="*60)
+    print(f"COMPREHENSIVE REPORT SAVED TO: {save_dir}")
+    print("="*60 + "\n")
+    
+    plt.close('all')
     
     return fig

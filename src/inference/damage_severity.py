@@ -18,6 +18,21 @@ DEFAULT_MODEL_PATH = CURR_DIR.parent.parent / "models" / "damage_severity_level_
 CLASS_NAMES = ["minor", "moderate", "severe"]
 
 
+def resize_image(image: np.ndarray, target_size: int = 640) -> np.ndarray:
+    height, width = image.shape[:2]
+
+    if height > width:
+        scale = target_size / height
+    else:
+        scale = target_size / width
+
+    new_width = int(width * scale)
+    new_height = int(height * scale)
+
+    resized_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+    
+    return resized_image
+
 
 # levels are: minor, moderate, severe
 class DamageSeverityDetector:
@@ -62,6 +77,9 @@ class DamageSeverityDetector:
                 raise ValueError(f"Failed to load image: {image_source}")
         else:
             image = image_source.copy()
+        
+        # Resize image for inference
+        image = resize_image(image, target_size=imgsz)
 
         results = self.model.predict(
             source=image,
@@ -138,3 +156,32 @@ class DamageSeverityDetector:
                 results.append({'error': str(e)})
         
         return results
+    
+
+if __name__ == "__main__":
+    model_class = DamageSeverityDetector()
+
+    imgs_dir = CURR_DIR.parent.parent / "imgs"
+    image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']
+    image_paths = []
+    
+    for ext in image_extensions:
+        image_paths.extend(list(imgs_dir.glob(ext)))
+
+    results = model_class.batch_detect([str(img_path) for img_path in image_paths])
+    
+    # Display results for each image
+    for img_path, result in zip(image_paths, results):
+        if 'error' in result:
+            print(f"\n{img_path.name}: Error - {result['error']}")
+            continue
+
+        cv2.imshow(f"Severity Detection - {img_path.name}", result['annotated_image'])
+
+        key = cv2.waitKey(0)
+        if key == ord('q'):
+            break
+        
+        cv2.destroyAllWindows()
+    
+    cv2.destroyAllWindows()

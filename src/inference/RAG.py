@@ -221,8 +221,10 @@ def process_full_case(car_info, parts_list):
         pdf_path = "reports/full_damage_report.pdf"
         os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
         convert_html_to_pdf(html_content, pdf_path)
+        return os.path.abspath(pdf_path)
     else:
         print("❌ Failed to generate report HTML.")
+        return None
 
 
 # --- MAIN EXECUTION ---

@@ -36,9 +36,21 @@ def inference_pipeline(image_paths :list,car_info: str):
     for crop_path in cropped_image_paths:
         damage_info = damage_labels.get(crop_path, {})
         parts_info = parts_metadata.get(crop_path, [])
+        
+        # Get damage_type from damage_info
         damage_type = damage_info.get('damage_type', 'no damage detected')
-        part_name = parts_info[0]['part_name'] if parts_info else 'Unknown Part'
-        # only keep the highest severity label for the crop (string) to keep results compact
+        
+        # Select highest-confidence detected part for this crop
+        part_name = None
+        if isinstance(parts_info, list) and parts_info:
+            # parts_info is a list of dicts with 'part_name' and 'confidence'
+            best_part = max(parts_info, key=lambda x: x.get('confidence', 0.0))
+            part_name = best_part.get('part_name') or best_part.get('class_name')
+        
+        if not part_name:
+            part_name = 'Unknown Part'
+        
+        # Only keep the highest severity label for the crop (string) to keep results compact
         severity_info = severity_results.get(crop_path, {})
         highest_severity = None
         if isinstance(severity_info, dict):
@@ -51,7 +63,7 @@ def inference_pipeline(image_paths :list,car_info: str):
         })
 
     # 4. Generate PDF Report using RAG
-    process_full_case(car_info, combined_results)
+    pdf_path = process_full_case(car_info, combined_results)
     
-    return "reprots/full_damage_report.pdf"
+    return pdf_path
 

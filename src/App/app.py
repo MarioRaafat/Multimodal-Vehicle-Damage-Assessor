@@ -4,9 +4,12 @@ import os
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import from pipelines
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add src to path so imports work cleanly
+PROJECT_SRC = Path(__file__).resolve().parents[1]
+if str(PROJECT_SRC) not in sys.path:
+    sys.path.insert(0, str(PROJECT_SRC))
 
+# Import from pipelines package
 from pipelines.inference_pipeline import inference_pipeline
 
 # --- Page Configuration ---

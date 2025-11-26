@@ -2,23 +2,22 @@ import requests
 import os
 import json
 import google.generativeai as genai
-from groq import Groq  # <--- Needed for DeepSeek R1
+from groq import Groq
 from xhtml2pdf import pisa
 
 # --- CONFIGURATION ---
 SERPER_API_KEY = "0f0678396df38b459ec2446b7680784f92d33837"
-GEMINI_API_KEY = "AIzaSyDR_e5kOoAsdWvgSkYURpjWk6wLMZ_GGhI"  # Put your actual key here
-GROQ_API_KEY = "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"  # Put your actual key here
+GEMINI_API_KEY = "AIzaSyDR_e5kOoAsdWvgSkYURpjWk6wLMZ_GGhI"
+GROQ_API_KEY = "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"
 
 
-# --- 1. REASONING LAYER (DeepSeek R1) ---
+# --- 1. REASONING LAYER (DeepSeek R1 via Groq) ---
 
 def decide_repair_strategy(car_info, part_name, damage_type, severity, api_key):
     """
-    Uses DeepSeek R1 to analyze damage and decide on Repair vs Replace.
-    Returns a dictionary with the decision, reasoning, and search query.
+    Analyzes damage for a SINGLE part.
     """
-    print("🧠 DeepSeek R1: Analyzing damage logic...")
+    print(f"🧠 DeepSeek R1: Analyzing logic for {part_name}...")
 
     client = Groq(api_key=api_key)
 
@@ -33,7 +32,7 @@ def decide_repair_strategy(car_info, part_name, damage_type, severity, api_key):
 
     Logic Rules:
     1. Safety parts (glass, airbags, seatbelts) are ALWAYS replace.
-    2. Severe structural damage (frame) is replace.
+    2. Severe structural damage is replace.
     3. Minor cosmetic damage (dents, scratches) on metal/plastic is repair.
     4. Complex electronics (headlights with cracked lens) are usually replace.
 
@@ -41,42 +40,32 @@ def decide_repair_strategy(car_info, part_name, damage_type, severity, api_key):
     1. Make a decision: "Repair" or "Replace".
     2. Write a short reasoning (1 sentence).
     3. Generate a highly optimized Google Search Query for Egypt.
-       - If Replace: Search for "{part_name} price {car_info} Egypt"
-       - If Repair: Search for "{part_name} repair cost {car_info} Egypt" or "body shop prices"
 
     OUTPUT FORMAT:
-    Return ONLY a raw JSON object (no markdown, no ```json tags).
+    Return ONLY a raw JSON object.
     {{
         "decision": "Replace",
-        "reasoning": "Headlight lenses cannot be safely resealed after shattering.",
-        "search_query": "Toyota Corolla 2022 headlight assembly price Egypt"
+        "reasoning": "Explanation here.",
+        "search_query": "Toyota Corolla 2022 {part_name} price Egypt"
     }}
     """
 
     try:
-        # We use the deepseek-r1 model hosted on Groq
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.3-70b-versatile",  # Using Llama as proxy for R1 reasoning
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.1  # Low temp for logical consistency
+            temperature=0.1
         )
 
         content = response.choices[0].message.content
-
-        # Cleanup: Remove <think> tags if DeepSeek includes them in the output
-        if "</think>" in content:
-            content = content.split("</think>")[-1].strip()
-
-        # Cleanup: Remove markdown code blocks if present
+        if "</think>" in content: content = content.split("</think>")[-1].strip()
         content = content.replace("```json", "").replace("```", "").strip()
-
         return json.loads(content)
 
     except Exception as e:
-        print(f"❌ Error in Reasoning Layer: {e}")
-        # Fallback default
+        print(f"❌ Error in Reasoning Layer for {part_name}: {e}")
         return {
-            "decision": "Check Manual",
+            "decision": "Manual Check",
             "reasoning": "AI Failed",
             "search_query": f"{car_info} {part_name} price Egypt"
         }
@@ -87,7 +76,7 @@ def decide_repair_strategy(car_info, part_name, damage_type, severity, api_key):
 def search_web(query, api_key):
     print(f"🔍 Searching web for: {query}...")
     url = "https://google.serper.dev/search"
-    payload = {"q": query, "num": 8}  # Reduced num slightly for speed
+    payload = {"q": query, "num": 5}  # Limit to 5 results per part to keep it fast
     headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
 
     try:
@@ -96,45 +85,51 @@ def search_web(query, api_key):
         return response.json()
     except Exception as e:
         print(f"❌ Error during web search: {e}")
-        return None
+        return {}
 
 
 # --- 3. REPORT LAYER (Gemini) ---
 
-def generate_final_report(strategy_data, search_results, api_key):
+def generate_final_report(car_info, all_parts_data, api_key):
     """
-    Uses Gemini to synthesize the DeepSeek decision + Google Results into a PDF.
+    Takes a LIST of parts data and generates ONE consolidated report.
     """
-    print("🤖 Gemini 2.5: Writing final report...")
+    print("🤖 Gemini 2.5: Writing consolidated report...")
 
     try:
         genai.configure(api_key=api_key)
-        # Note: 'gemini-1.5-flash' is the correct stable model name
+        # Using 1.5 Flash (Standard stable version)
         model = genai.GenerativeModel('gemini-2.5-flash')
+
+        # We convert the list of dicts to a string for the LLM to read
+        data_str = json.dumps(all_parts_data, indent=2)
 
         prompt = f"""
         You are an expert auto repair estimator.
 
-        CASE DETAILS:
-        - Decision: {strategy_data['decision']}
-        - Logic: {strategy_data['reasoning']}
+        VEHICLE: {car_info}
 
-        MARKET DATA (Search Results):
-        {search_results}
+        I have analyzed multiple parts for this vehicle. 
+        Here is the JSON data containing the Decision, Logic, and Market Search Results for EACH part:
+
+        {data_str}
 
         Task:
-        Generate a professional HTML repair estimate report.
+        Generate a professional HTML repair estimate report that covers ALL parts.
 
-        Structure:
-        1. **Assessment**: State clearly that the recommendation is to {strategy_data['decision']} and why.
-        2. **Cost Analysis**: Extract prices from search results. Convert to EGP. Calculate Min/Max/Avg.
-        3. **Recommendation**: Final advice for the user.
+        Structure Requirements:
+        1. **Header**: Vehicle Info and Date.
+        2. **Executive Summary Table**: A table listing Part Name, Damage, Decision (Repair/Replace), and Estimated Cost Range (calculated from search results).
+        3. **Detailed Breakdown**: Create a separate section for each part that includes:
+           - The Analysis Logic (Why did we decide to Repair/Replace?).
+           - Market Data Table (List specific items/prices found in the search results).
+        4. **Grand Total**: An estimated total range for the whole job.
 
         Styling Requirements:
         - Use standard HTML5 with internal CSS.
         - Font: Helvetica or Arial.
-        - Use a color scheme of Navy Blue and White.
-        - Render the "Decision" (Repair/Replace) in a large, colored badge (Red for Replace, Green for Repair).
+        - Color Scheme: Navy Blue headers, light gray backgrounds for sections.
+        - Use color badges for decisions (Red = Replace, Green = Repair).
         - RETURN ONLY RAW HTML.
         """
 
@@ -162,40 +157,87 @@ def convert_html_to_pdf(source_html, output_filename):
         print(f"❌ File Error: {e}")
 
 
-# --- MAIN ORCHESTRATOR ---
+# --- 5. ORCHESTRATOR (PROCESS MULTIPLE PARTS) ---
+
+def process_full_case(car_info, parts_list):
+    """
+    Iterates through all parts, gathers data, and generates one report.
+    """
+
+    # This list will store the full bundle of data for every part
+    full_case_data = []
+
+    print(f"🚗 Starting Full Case Analysis for: {car_info}")
+    print(f"📦 Parts to analyze: {len(parts_list)}")
+
+    # --- LOOP THROUGH EACH PART ---
+    for part in parts_list:
+        part_name = part['name']
+        damage_type = part['damage']
+        severity = part['severity']
+
+        print(f"\n--- Processing Part: {part_name} ---")
+
+        # 1. Decide Strategy
+        strategy = decide_repair_strategy(
+            car_info, part_name, damage_type, severity, GROQ_API_KEY
+        )
+        print(f"   👉 Decision: {strategy.get('decision')}")
+
+        # 2. Search Web
+        search_results = search_web(strategy.get('search_query', ''), SERPER_API_KEY)
+
+        # 3. Bundle Data
+        part_record = {
+            "part_name": part_name,
+            "damage_input": f"{damage_type} ({severity})",
+            "strategy": strategy,
+            "market_data": search_results
+        }
+
+        full_case_data.append(part_record)
+
+    # --- GENERATE REPORT ---
+    print("\n📝 Generating Final PDF...")
+    html_content = generate_final_report(car_info, full_case_data, GEMINI_API_KEY)
+
+    if html_content:
+        # Cleanup Markdown
+        if "```html" in html_content:
+            html_content = html_content.split("```html")[1].split("```")[0]
+        elif "```" in html_content:
+            html_content = html_content.split("```")[1].split("```")[0]
+
+        convert_html_to_pdf(html_content, "full_damage_report.pdf")
+
+
+# --- MAIN EXECUTION ---
 
 def main():
-    # --- INPUTS (These would come from your Streamlit App or YOLO model) ---
+    # Example Input Data (This would come from your UI or YOLO loop)
     car_info = "Toyota Corolla 2022"
-    part_name = "Front Bumper"
-    damage_type = "Deep Dent with Paint Scratch"
-    severity = "Moderate"
-    # Try changing severity to "Severe/Cracked" to see the logic change!
 
-    print(f"🚗 Processing Case: {car_info} | {part_name} | {severity}")
+    # List of detected parts and their status
+    parts_to_process = [
+        {
+            "name": "Front Bumper",
+            "damage": "Deep Scratch",
+            "severity": "Moderate"
+        },
+        {
+            "name": "Headlight",
+            "damage": "Cracked Lens",
+            "severity": "Severe"
+        },
+        {
+            "name": "Hood",
+            "damage": "Minor Dent",
+            "severity": "Low"
+        }
+    ]
 
-    # STEP 1: DeepSeek decides Strategy & Query
-    strategy = decide_repair_strategy(
-        car_info, part_name, damage_type, severity, GROQ_API_KEY
-    )
-    print(f"👉 Strategy: {strategy['decision']} ({strategy['reasoning']})")
-
-    # STEP 2: Search using the OPTIMIZED query
-    results = search_web(strategy['search_query'], SERPER_API_KEY)
-    if not results: return
-
-    # STEP 3: Gemini writes the report
-    html_content = generate_final_report(strategy, results, GEMINI_API_KEY)
-    if not html_content: return
-
-    # Cleanup HTML markdown
-    if "```html" in html_content:
-        html_content = html_content.split("```html")[1].split("```")[0]
-    elif "```" in html_content:
-        html_content = html_content.split("```")[1].split("```")[0]
-
-    # STEP 4: Convert to PDF
-    convert_html_to_pdf(html_content, "smart_damage_report.pdf")
+    # Run the main process
+    process_full_case(car_info, parts_to_process)
 
 
 if __name__ == "__main__":

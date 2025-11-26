@@ -1,100 +1,56 @@
 import os
+from pathlib import Path
 
-################################### Paths ###################################
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, 'Data')
-SEVERITY_DATA_DIR = os.path.join(DATA_DIR, 'Damage Severity Datasets', '1')
-SEVERITY_TRAIN_DIR = os.path.join(SEVERITY_DATA_DIR, 'training')
-SEVERITY_VAL_DIR = os.path.join(SEVERITY_DATA_DIR, 'validation')
+# Project paths
+# PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path('/content/gdrive/MyDrive/Multimodal-Vehicle-Damage-Assessor')
+DATA_DIR = PROJECT_ROOT / "Data" / "Damage Severity Datasets" / "1"
+TRAIN_DIR = DATA_DIR / "training"
+VAL_DIR = DATA_DIR / "validation"
+MODELS_DIR = PROJECT_ROOT / "models"
+RESULTS_DIR = PROJECT_ROOT / "results"
+LOGS_DIR = PROJECT_ROOT / "logs"
 
-MODELS_DIR = os.path.join(BASE_DIR, 'models')
-RESULTS_DIR = os.path.join(BASE_DIR, 'results')
-LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+# Create directories if they don't exist
+MODELS_DIR.mkdir(exist_ok=True, parents=True)
+RESULTS_DIR.mkdir(exist_ok=True, parents=True)
+LOGS_DIR.mkdir(exist_ok=True, parents=True)
 
+# Class names and mapping
+CLASS_NAMES = ['minor', 'moderate', 'severe']
+CLASS_MAPPING = {
+    '01-minor': 0,
+    '02-moderate': 1,
+    '03-severe': 2
+}
 
-################################### Parameters ###################################
-# Image parameters
-IMG_HEIGHT = 224
-IMG_WIDTH = 224
-IMG_CHANNELS = 3
-INPUT_SHAPE = (IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS)
+# Image settings
+IMG_SIZE = 224  # Standard size for most CNNs
+YOLO_IMG_SIZE = 640  # Standard YOLO input size
 
-# Training parameters
+# Training hyperparameters
 BATCH_SIZE = 32
-EPOCHS = 150
-INITIAL_LEARNING_RATE = 0.0001  # Lower for fine-tuning pretrained models
-VALIDATION_SPLIT = 0.2
+EPOCHS = 50
+LEARNING_RATE = 0.001
+YOLO_EPOCHS = 100
 
-# Fine-tuning parameters
-UNFREEZE_LAYERS = 50  # Number of layers to unfreeze from the top
-FINE_TUNE_EPOCHS = 30  # Additional epochs for fine-tuning
-FINE_TUNE_LR = 0.00001  # Lower learning rate for fine-tuning
-
-# Data augmentation parameters
+# Data augmentation settings
 ROTATION_RANGE = 20
 WIDTH_SHIFT_RANGE = 0.2
 HEIGHT_SHIFT_RANGE = 0.2
-SHEAR_RANGE = 0.2
-ZOOM_RANGE = 0.2
 HORIZONTAL_FLIP = True
-FILL_MODE = 'nearest'
+ZOOM_RANGE = 0.2
 
-################################### Models ###################################
-SEVERITY_NUM_CLASSES = 3
-SEVERITY_CLASS_NAMES = ['Minor', 'Moderate', 'Severe']
-SEVERITY_CLASS_LABELS = {
-    'minor': 0,
-    'moderate': 1,
-    'severe': 2
-}
-
-# Model architectures to compare (custom models)
-SEVERITY_MODEL_ARCHITECTURES = [
-    'simple_cnn',
-    'vgg_style',
-    'resnet_style',
-    'efficientnet_b0',
-    'mobilenet_v2'
-]
-
-# Pre-trained model architectures (RECOMMENDED - better performance)
-PRETRAINED_MODELS = {
-    'efficientnet_b4': {
-        'input_size': (380, 380),
-        'description': 'Best accuracy/efficiency tradeoff',
-        'params': '19M'
-    },
-    'resnet50v2': {
-        'input_size': (224, 224),
-        'description': 'Industry standard, reliable',
-        'params': '25M'
-    },
-    'mobilenet_v2': {
-        'input_size': (224, 224),
-        'description': 'Lightweight, fast inference',
-        'params': '3.5M'
-    },
-    'densenet121': {
-        'input_size': (224, 224),
-        'description': 'Efficient feature reuse',
-        'params': '8M'
-    },
-    'inceptionv3': {
-        'input_size': (299, 299),
-        'description': 'Multi-scale feature extraction',
-        'params': '23M'
-    }
-}
-
-# Default models to train (can be modified)
-MODELS_TO_TRAIN = ['efficientnet_b4', 'resnet50v2', 'densenet121', 'mobilenet_v2', 'inceptionv3']
-
-################################### Other Settings ###################################
 # Random seed for reproducibility
 RANDOM_SEED = 42
 
+# Model names
+MODELS = {
+    'yolov8': 'YOLOv8',
+    'resnet50': 'ResNet50',
+    'efficientnetb0': 'EfficientNetB0',
+    'mobilenetv2': 'MobileNetV2'
+}
 
-# Callbacks
-EARLY_STOPPING_PATIENCE = 10
-REDUCE_LR_PATIENCE = 5
-REDUCE_LR_FACTOR = 0.5
+# Device settings
+DEVICE = 'cuda'  # Will be auto-detected in code (cuda/cpu)

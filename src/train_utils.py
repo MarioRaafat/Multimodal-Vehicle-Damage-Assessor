@@ -1,383 +1,264 @@
-"""
-Training utilities for damage severity classification models
-Includes training loops, callbacks, metrics tracking, and evaluation
-"""
-
 import tensorflow as tf
-from tensorflow.keras.callbacks import (
-    EarlyStopping, 
-    ModelCheckpoint, 
-    ReduceLROnPlateau,
-    TensorBoard,
-    CSVLogger
+from tensorflow.keras import layers, models
+from tensorflow.keras.applications import (
+    ResNet50, EfficientNetB0, MobileNetV2, VGG16
 )
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import (
+    EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, TensorBoard
+)
+from pathlib import Path
 import numpy as np
-import pandas as pd
-import os
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import json
-from datetime import datetime
-import config
+
+from config import (
+    IMG_SIZE, LEARNING_RATE, CLASS_NAMES, 
+    MODELS_DIR, LOGS_DIR, RANDOM_SEED
+)
 
 
-def compile_model(model, learning_rate=None):
+def build_transfer_learning_model(base_model_name, img_size=IMG_SIZE, num_classes=3):
     """
-    Compile model with optimizer, loss, and metrics
+    Build a transfer learning model with a specified base
     
     Args:
-        model: Keras model to compile
-        learning_rate: Learning rate for optimizer
+        base_model_name: Name of the base model ('resnet50', 'efficientnetb0', 'mobilenetv2', 'vgg16')
+        img_size: Input image size
+        num_classes: Number of output classes
+        
+    Returns:
+        Compiled Keras model
     """
-    if learning_rate is None:
-        learning_rate = config.INITIAL_LEARNING_RATE
+    # Select base model
+    base_models = {
+        'resnet50': ResNet50,
+        'efficientnetb0': EfficientNetB0,
+        'mobilenetv2': MobileNetV2,
+        'vgg16': VGG16
+    }
     
-    optimizer = Adam(learning_rate=learning_rate)
+    if base_model_name.lower() not in base_models:
+        raise ValueError(f"Unknown base model: {base_model_name}")
     
-    model.compile(
-        optimizer=optimizer,
-        loss='categorical_crossentropy',
-        metrics=[
-            'accuracy',
-            tf.keras.metrics.Precision(name='precision'),
-            tf.keras.metrics.Recall(name='recall'),
-            tf.keras.metrics.AUC(name='auc')
-        ]
+    # Load base model
+    base_model = base_models[base_model_name.lower()](
+        include_top=False,
+        weights='imagenet',
+        input_shape=(img_size, img_size, 3)
     )
     
-    print(f"Model compiled with learning rate: {learning_rate}")
+    # Freeze base model
+    base_model.trainable = False
+    
+    # Build model
+    inputs = layers.Input(shape=(img_size, img_size, 3))
+    x = base_model(inputs, training=False)
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dropout(0.3)(x)
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.Dropout(0.3)(x)
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
+    
+    model = models.Model(inputs, outputs)
+    
+    # Compile model
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
     return model
 
 
-def get_callbacks(model_name, stage='initial'):
+def get_callbacks(model_name, patience=10):
     """
-    Create callbacks for training
+    Get training callbacks
     
     Args:
-        model_name: Name of the model
-        stage: 'initial' or 'finetune'
+        model_name: Name of the model for saving
+        patience: Patience for early stopping
         
     Returns:
         List of callbacks
     """
-    # Create directories
-    os.makedirs(config.MODELS_DIR, exist_ok=True)
-    os.makedirs(config.LOGS_DIR, exist_ok=True)
-    os.makedirs(config.RESULTS_DIR, exist_ok=True)
-    
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    # Model checkpoint path
-    checkpoint_path = os.path.join(
-        config.MODELS_DIR, 
-        f'{model_name}_{stage}_{timestamp}.h5'
-    )
-    
-    # CSV logger path
-    csv_path = os.path.join(
-        config.RESULTS_DIR,
-        f'{model_name}_{stage}_training_{timestamp}.csv'
-    )
-    
-    # TensorBoard log path
-    tensorboard_path = os.path.join(
-        config.LOGS_DIR,
-        f'{model_name}_{stage}_{timestamp}'
-    )
-    
     callbacks = [
-        # Save best model
-        ModelCheckpoint(
-            filepath=checkpoint_path,
-            monitor='val_accuracy',
-            save_best_only=True,
-            mode='max',
-            verbose=1
-        ),
-        
-        # Early stopping
         EarlyStopping(
             monitor='val_loss',
-            patience=config.EARLY_STOPPING_PATIENCE,
+            patience=patience,
             restore_best_weights=True,
             verbose=1
         ),
-        
-        # Reduce learning rate on plateau
         ReduceLROnPlateau(
             monitor='val_loss',
-            factor=config.REDUCE_LR_FACTOR,
-            patience=config.REDUCE_LR_PATIENCE,
+            factor=0.5,
+            patience=5,
             min_lr=1e-7,
             verbose=1
         ),
-        
-        # TensorBoard logging
-        TensorBoard(
-            log_dir=tensorboard_path,
-            histogram_freq=1,
-            write_graph=True,
-            update_freq='epoch'
+        ModelCheckpoint(
+            filepath=str(MODELS_DIR / f'{model_name}_best.h5'),
+            monitor='val_accuracy',
+            save_best_only=True,
+            verbose=1
         ),
-        
-        # CSV logging
-        CSVLogger(
-            filename=csv_path,
-            separator=',',
-            append=False
+        TensorBoard(
+            log_dir=str(LOGS_DIR / model_name),
+            histogram_freq=1
         )
     ]
     
-    print(f"\nCallbacks configured:")
-    print(f"  - Checkpoint: {checkpoint_path}")
-    print(f"  - CSV Log: {csv_path}")
-    print(f"  - TensorBoard: {tensorboard_path}\n")
-    
-    return callbacks, checkpoint_path
+    return callbacks
 
 
-def train_model(model, train_dataset, val_dataset, model_name, epochs=None, callbacks_list=None):
+def evaluate_model(model, data_generator):
     """
-    Train the model
+    Evaluate model on a dataset
     
     Args:
-        model: Compiled Keras model
-        train_dataset: Training dataset
-        val_dataset: Validation dataset
-        model_name: Name of the model
-        epochs: Number of epochs
-        callbacks_list: List of callbacks
+        model: Trained Keras model
+        data_generator: Data generator
         
     Returns:
-        history: Training history
-        checkpoint_path: Path to saved model
+        Dictionary with metrics
     """
-    if epochs is None:
-        epochs = config.EPOCHS
+    # Get predictions
+    predictions = model.predict(data_generator, verbose=1)
+    y_pred = np.argmax(predictions, axis=1)
+    y_true = data_generator.classes
     
-    if callbacks_list is None:
-        callbacks_list, checkpoint_path = get_callbacks(model_name, 'initial')
-    else:
-        checkpoint_path = None
-        for cb in callbacks_list:
-            if isinstance(cb, ModelCheckpoint):
-                checkpoint_path = cb.filepath
-                break
-    
-    print(f"\n{'='*60}")
-    print(f"Starting training for {model_name}")
-    print(f"Epochs: {epochs}")
-    print(f"{'='*60}\n")
-    
-    history = model.fit(
-        train_dataset,
-        validation_data=val_dataset,
-        epochs=epochs,
-        callbacks=callbacks_list,
-        verbose=1
-    )
-    
-    print(f"\n{'='*60}")
-    print(f"Training completed for {model_name}")
-    print(f"{'='*60}\n")
-    
-    return history, checkpoint_path
-
-
-def evaluate_model(model, test_dataset, model_name):
-    """
-    Evaluate model on test/validation dataset
-    
-    Args:
-        model: Trained model
-        test_dataset: Test dataset
-        model_name: Name of the model
-        
-    Returns:
-        Dictionary of evaluation metrics
-    """
-    print(f"\n{'='*60}")
-    print(f"Evaluating {model_name}")
-    print(f"{'='*60}\n")
-    
-    results = model.evaluate(test_dataset, verbose=1)
-    
-    # Get metric names
-    metric_names = model.metrics_names
-    
-    # Create results dictionary
-    eval_results = {name: float(value) for name, value in zip(metric_names, results)}
-    
-    print(f"\nEvaluation Results for {model_name}:")
-    print("-" * 40)
-    for metric, value in eval_results.items():
-        print(f"  {metric}: {value:.4f}")
-    print(f"{'='*60}\n")
-    
-    return eval_results
-
-
-def get_predictions(model, dataset, class_names=None):
-    """
-    Get predictions and true labels from dataset
-    
-    Args:
-        model: Trained model
-        dataset: Dataset to predict on
-        class_names: List of class names
-        
-    Returns:
-        y_true, y_pred, y_pred_proba
-    """
-    if class_names is None:
-        class_names = config.SEVERITY_CLASS_NAMES
-    
-    y_true = []
-    y_pred_proba = []
-    
-    print("Generating predictions...")
-    for images, labels in dataset:
-        predictions = model.predict(images, verbose=0)
-        y_pred_proba.extend(predictions)
-        y_true.extend(np.argmax(labels.numpy(), axis=1))
-    
-    y_true = np.array(y_true)
-    y_pred_proba = np.array(y_pred_proba)
-    y_pred = np.argmax(y_pred_proba, axis=1)
-    
-    return y_true, y_pred, y_pred_proba
-
-
-def calculate_metrics(y_true, y_pred, y_pred_proba, class_names=None):
-    """
-    Calculate detailed classification metrics
-    
-    Args:
-        y_true: True labels
-        y_pred: Predicted labels
-        y_pred_proba: Prediction probabilities
-        class_names: List of class names
-        
-    Returns:
-        Dictionary of metrics
-    """
-    from sklearn.metrics import (
-        classification_report,
-        confusion_matrix,
-        accuracy_score,
-        precision_recall_fscore_support
-    )
-    
-    if class_names is None:
-        class_names = config.SEVERITY_CLASS_NAMES
-    
-    # Overall metrics
+    # Calculate metrics
     accuracy = accuracy_score(y_true, y_pred)
-    precision, recall, f1, support = precision_recall_fscore_support(
-        y_true, y_pred, average='weighted'
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_true, y_pred, average='weighted', zero_division=0
     )
     
     # Per-class metrics
-    precision_per_class, recall_per_class, f1_per_class, support_per_class = \
-        precision_recall_fscore_support(y_true, y_pred, average=None)
-    
-    # Confusion matrix
-    cm = confusion_matrix(y_true, y_pred)
-    
-    # Classification report
-    report = classification_report(
-        y_true, y_pred, 
-        target_names=class_names,
-        output_dict=True
+    precision_per_class, recall_per_class, f1_per_class, _ = precision_recall_fscore_support(
+        y_true, y_pred, average=None, zero_division=0
     )
     
-    metrics = {
+    results = {
         'accuracy': float(accuracy),
         'precision': float(precision),
         'recall': float(recall),
         'f1_score': float(f1),
-        'confusion_matrix': cm.tolist(),
-        'classification_report': report,
         'per_class_metrics': {
-            class_names[i]: {
+            CLASS_NAMES[i]: {
                 'precision': float(precision_per_class[i]),
                 'recall': float(recall_per_class[i]),
-                'f1_score': float(f1_per_class[i]),
-                'support': int(support_per_class[i])
+                'f1_score': float(f1_per_class[i])
             }
-            for i in range(len(class_names))
-        }
+            for i in range(len(CLASS_NAMES))
+        },
+        'y_true': y_true.tolist(),
+        'y_pred': y_pred.tolist()
     }
     
-    return metrics
+    return results
 
 
-def save_training_results(model_name, history, eval_metrics, checkpoint_path):
+def save_model_results(model_name, results, history=None):
     """
-    Save training results to JSON file
+    Save model results to JSON file
     
     Args:
         model_name: Name of the model
-        history: Training history
-        eval_metrics: Evaluation metrics
-        checkpoint_path: Path to saved model
+        results: Results dictionary from evaluate_model
+        history: Training history (optional)
     """
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    results_file = os.path.join(
-        config.RESULTS_DIR,
-        f'{model_name}_results_{timestamp}.json'
-    )
-    
-    results = {
+    output = {
         'model_name': model_name,
-        'timestamp': timestamp,
-        'checkpoint_path': checkpoint_path,
-        'training_history': {
-            key: [float(v) for v in value] 
-            for key, value in history.history.items()
+        'metrics': {
+            'accuracy': results['accuracy'],
+            'precision': results['precision'],
+            'recall': results['recall'],
+            'f1_score': results['f1_score']
         },
-        'evaluation_metrics': eval_metrics,
-        'config': {
-            'batch_size': config.BATCH_SIZE,
-            'epochs': config.EPOCHS,
-            'initial_lr': config.INITIAL_LEARNING_RATE
-        }
+        'per_class_metrics': results['per_class_metrics']
     }
     
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=4)
+    if history is not None:
+        if hasattr(history, 'history'):
+            history_dict = history.history
+        else:
+            history_dict = history
+            
+        output['training_history'] = {
+            'final_train_accuracy': float(history_dict['accuracy'][-1]),
+            'final_val_accuracy': float(history_dict['val_accuracy'][-1]),
+            'final_train_loss': float(history_dict['loss'][-1]),
+            'final_val_loss': float(history_dict['val_loss'][-1]),
+            'epochs_trained': len(history_dict['accuracy'])
+        }
     
-    print(f"\nResults saved to: {results_file}")
+    # Save to file
+    save_path = MODELS_DIR / f'{model_name}_results.json'
+    with open(save_path, 'w') as f:
+        json.dump(output, f, indent=4)
     
-    return results_file
+    print(f"Saved results to {save_path}")
 
 
-def load_training_history(csv_path):
-    """Load training history from CSV file"""
-    return pd.read_csv(csv_path)
-
-
-def compare_models(results_dict):
+def fine_tune_model(model, train_generator, val_generator, 
+                    base_layers_to_unfreeze=20, epochs=20):
     """
-    Compare multiple models and create summary
+    Fine-tune a pre-trained model by unfreezing some layers
     
     Args:
-        results_dict: Dictionary with model names as keys and metrics as values
+        model: Pre-trained model
+        train_generator: Training data generator
+        val_generator: Validation data generator
+        base_layers_to_unfreeze: Number of base layers to unfreeze
+        epochs: Number of fine-tuning epochs
         
     Returns:
-        DataFrame with comparison
+        Training history
     """
-    comparison_data = []
+    # Unfreeze the base model layers
+    base_model = model.layers[1]  # Assuming the base model is the second layer
+    base_model.trainable = True
     
-    for model_name, metrics in results_dict.items():
-        comparison_data.append({
-            'Model': model_name,
-            'Accuracy': metrics['accuracy'],
-            'Precision': metrics['precision'],
-            'Recall': metrics['recall'],
-            'F1-Score': metrics['f1_score']
-        })
+    # Freeze all layers except the last N
+    for layer in base_model.layers[:-base_layers_to_unfreeze]:
+        layer.trainable = False
     
-    df = pd.DataFrame(comparison_data)
-    df = df.sort_values('Accuracy', ascending=False)
+    # Recompile with lower learning rate
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE / 10),
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
     
-    return df
+    print(f"Fine-tuning last {base_layers_to_unfreeze} layers...")
+    
+    # Train
+    history = model.fit(
+        train_generator,
+        validation_data=val_generator,
+        epochs=epochs,
+        verbose=1
+    )
+    
+    return history
+
+
+def load_trained_model(model_name):
+    """
+    Load a trained model
+    
+    Args:
+        model_name: Name of the model
+        
+    Returns:
+        Loaded Keras model
+    """
+    model_path = MODELS_DIR / f'{model_name}_best.h5'
+    
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found: {model_path}")
+    
+    model = tf.keras.models.load_model(model_path)
+    print(f"Loaded model from {model_path}")
+    
+    return model

@@ -1,246 +1,135 @@
 import os
 import numpy as np
-import matplotlib.pyplot as plt
 import tensorflow as tf
+from pathlib import Path
+from PIL import Image
+import matplotlib.pyplot as plt
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.utils import to_categorical
-import config
+from sklearn.model_selection import train_test_split
+import shutil
+
+from config import (
+    TRAIN_DIR, VAL_DIR, IMG_SIZE, BATCH_SIZE,
+    ROTATION_RANGE, WIDTH_SHIFT_RANGE, HEIGHT_SHIFT_RANGE,
+    HORIZONTAL_FLIP, ZOOM_RANGE, CLASS_NAMES, RANDOM_SEED
+)
 
 
-def get_preprocessing_function(model_name):
-    """Get the appropriate preprocessing function for each model"""
-    from tensorflow.keras.applications import (
-        efficientnet,
-        resnet_v2,
-        mobilenet_v2,
-        densenet,
-        inception_v3
+def create_data_generators(img_size=IMG_SIZE, batch_size=BATCH_SIZE):
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=ROTATION_RANGE,
+        width_shift_range=WIDTH_SHIFT_RANGE,
+        height_shift_range=HEIGHT_SHIFT_RANGE,
+        horizontal_flip=HORIZONTAL_FLIP,
+        zoom_range=ZOOM_RANGE,
+        fill_mode='nearest'
     )
     
-    preprocessing_functions = {
-        'efficientnet_b4': efficientnet.preprocess_input,
-        'resnet50v2': resnet_v2.preprocess_input,
-        'mobilenet_v2': mobilenet_v2.preprocess_input,
-        'densenet121': densenet.preprocess_input,
-        'inceptionv3': inception_v3.preprocess_input
-    }
-    
-    return preprocessing_functions.get(model_name, lambda x: x / 255.0)
-
-
-def create_data_generators(model_name='efficientnet_b4', use_augmentation=True):
-    """
-    Create data generators with model-specific preprocessing
-    
-    Args:
-        model_name: Name of the model (for preprocessing)
-        use_augmentation: Whether to use data augmentation
-        
-    Returns:
-        train_generator, val_generator
-    """
-    # Get model-specific input size
-    target_size = config.PRETRAINED_MODELS[model_name]['input_size']
-    
-    # Get preprocessing function
-    preprocess_func = get_preprocessing_function(model_name)
-    
-    # Training data augmentation
-    if use_augmentation:
-        train_datagen = ImageDataGenerator(
-            preprocessing_function=preprocess_func,
-            rotation_range=config.ROTATION_RANGE,
-            width_shift_range=config.WIDTH_SHIFT_RANGE,
-            height_shift_range=config.HEIGHT_SHIFT_RANGE,
-            shear_range=config.SHEAR_RANGE,
-            zoom_range=config.ZOOM_RANGE,
-            horizontal_flip=config.HORIZONTAL_FLIP,
-            fill_mode=config.FILL_MODE,
-            brightness_range=[0.8, 1.2]  # Additional augmentation for vehicle images
-        )
-    else:
-        train_datagen = ImageDataGenerator(preprocessing_function=preprocess_func)
-    
-    # Validation data - only preprocessing
-    val_datagen = ImageDataGenerator(preprocessing_function=preprocess_func)
+    # Only rescaling for validation
+    val_datagen = ImageDataGenerator(rescale=1./255)
     
     # Create generators
     train_generator = train_datagen.flow_from_directory(
-        config.SEVERITY_TRAIN_DIR,
-        target_size=target_size,
-        batch_size=config.BATCH_SIZE,
+        TRAIN_DIR,
+        target_size=(img_size, img_size),
+        batch_size=batch_size,
         class_mode='categorical',
         shuffle=True,
-        seed=config.RANDOM_SEED
+        seed=RANDOM_SEED
     )
     
     val_generator = val_datagen.flow_from_directory(
-        config.SEVERITY_VAL_DIR,
-        target_size=target_size,
-        batch_size=config.BATCH_SIZE,
+        VAL_DIR,
+        target_size=(img_size, img_size),
+        batch_size=batch_size,
         class_mode='categorical',
-        shuffle=False,
-        seed=config.RANDOM_SEED
+        shuffle=False
     )
     
-    print(f"\nData generators created for {model_name}")
-    print(f"Target size: {target_size}")
-    print(f"Train samples: {train_generator.samples}")
-    print(f"Validation samples: {val_generator.samples}")
-    print(f"Batch size: {config.BATCH_SIZE}")
-    
-    return train_generator, val_generator
+    return train_generator, val_generator, train_generator.class_indices
 
 
-def create_tf_dataset(model_name='efficientnet_b4'):
-    """
-    Create TensorFlow datasets with better performance using tf.data API
+def load_dataset_for_yolo(output_dir):
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True, parents=True)
     
-    Args:
-        model_name: Name of the model (for preprocessing)
+    # Create directory structure
+    for split in ['train', 'val']:
+        for class_name in CLASS_NAMES:
+            (output_path / split / class_name).mkdir(exist_ok=True, parents=True)
+    
+    # Copy images to YOLO format
+    for split, source_dir in [('train', TRAIN_DIR), ('val', VAL_DIR)]:
+        for folder in source_dir.iterdir():
+            if folder.is_dir():
+                class_name = CLASS_NAMES[int(folder.name.split('-')[0]) - 1]
+                dest_dir = output_path / split / class_name
+                
+                for img_file in folder.glob('*'):
+                    if img_file.suffix.lower() in ['.jpg', '.jpeg', '.png']:
+                        shutil.copy2(img_file, dest_dir / img_file.name)
+    
+    # Create dataset.yaml
+    yaml_content = f"""# Vehicle Damage Severity Dataset
+path: {output_path.absolute().as_posix()}
+train: train
+val: val
+
+# Classes
+names:
+  0: minor
+  1: moderate
+  2: severe
+"""
+    
+    yaml_path = output_path / 'dataset.yaml'
+    with open(yaml_path, 'w') as f:
+        f.write(yaml_content)
+    
+    return str(yaml_path)
+
+
+def get_class_distribution(data_dir):
+    distribution = {}
+    
+    for folder in Path(data_dir).iterdir():
+        if folder.is_dir():
+            class_name = folder.name
+            count = len(list(folder.glob('*')))
+            distribution[class_name] = count
+    
+    return distribution
+
+
+def visualize_sample_images(data_dir, num_samples=3):
+    folders = sorted([f for f in Path(data_dir).iterdir() if f.is_dir()])
+    
+    fig, axes = plt.subplots(len(folders), num_samples, figsize=(15, 5*len(folders)))
+    
+    for i, folder in enumerate(folders):
+        images = list(folder.glob('*'))[:num_samples]
+        class_name = folder.name
         
-    Returns:
-        train_dataset, val_dataset, dataset_info
-    """
-    target_size = config.PRETRAINED_MODELS[model_name]['input_size']
-    preprocess_func = get_preprocessing_function(model_name)
-    
-    # Training dataset
-    train_dataset = tf.keras.utils.image_dataset_from_directory(
-        config.SEVERITY_TRAIN_DIR,
-        labels='inferred',
-        label_mode='categorical',
-        image_size=target_size,
-        batch_size=config.BATCH_SIZE,
-        shuffle=True,
-        seed=config.RANDOM_SEED
-    )
-    
-    # Validation dataset
-    val_dataset = tf.keras.utils.image_dataset_from_directory(
-        config.SEVERITY_VAL_DIR,
-        labels='inferred',
-        label_mode='categorical',
-        image_size=target_size,
-        batch_size=config.BATCH_SIZE,
-        shuffle=False,
-        seed=config.RANDOM_SEED
-    )
-    
-    # Apply preprocessing
-    train_dataset = train_dataset.map(
-        lambda x, y: (preprocess_func(x), y),
-        num_parallel_calls=tf.data.AUTOTUNE
-    )
-    
-    val_dataset = val_dataset.map(
-        lambda x, y: (preprocess_func(x), y),
-        num_parallel_calls=tf.data.AUTOTUNE
-    )
-    
-    # Apply data augmentation to training set
-    data_augmentation = tf.keras.Sequential([
-        tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.2),
-        tf.keras.layers.RandomZoom(0.2),
-        tf.keras.layers.RandomContrast(0.2),
-    ])
-    
-    train_dataset = train_dataset.map(
-        lambda x, y: (data_augmentation(x, training=True), y),
-        num_parallel_calls=tf.data.AUTOTUNE
-    )
-    
-    # Performance optimization
-    train_dataset = train_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
-    val_dataset = val_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
-    
-    # Get dataset info
-    dataset_info = {
-        'train_samples': len(train_dataset) * config.BATCH_SIZE,
-        'val_samples': len(val_dataset) * config.BATCH_SIZE,
-        'num_classes': config.SEVERITY_NUM_CLASSES,
-        'class_names': config.SEVERITY_CLASS_NAMES,
-        'target_size': target_size,
-        'batch_size': config.BATCH_SIZE
-    }
-    
-    print(f"\nTensorFlow datasets created for {model_name}")
-    print(f"Target size: {target_size}")
-    print(f"Train batches: {len(train_dataset)}")
-    print(f"Validation batches: {len(val_dataset)}")
-    
-    return train_dataset, val_dataset, dataset_info
-
-
-def get_dataset_info(train_generator, val_generator):
-    info = {
-        'train_samples': train_generator.samples,
-        'val_samples': val_generator.samples,
-        'total_samples': train_generator.samples + val_generator.samples,
-        'num_classes': train_generator.num_classes,
-        'class_indices': train_generator.class_indices,
-        'batch_size': config.BATCH_SIZE,
-        'image_shape': config.INPUT_SHAPE
-    }
-    
-    return info
-
-
-def plot_sample_images(dataset, num_images=16, denormalize=True):
-    """
-    Plot sample images from dataset
-    
-    Args:
-        dataset: TensorFlow dataset or generator
-        num_images: Number of images to plot
-        denormalize: Whether to denormalize images for display
-    """
-    # Get a batch
-    for images, labels in dataset.take(1):
-        images_np = images.numpy()
-        labels_np = labels.numpy()
-        
-        # Denormalize if needed (for display purposes)
-        if denormalize:
-            # Simple denormalization (works for most models)
-            images_np = (images_np - images_np.min()) / (images_np.max() - images_np.min())
-        
-        fig, axes = plt.subplots(4, 4, figsize=(15, 15))
-        fig.suptitle('Sample Images from Dataset', fontsize=16)
-        
-        for i, ax in enumerate(axes.flat):
-            if i < num_images and i < len(images_np):
-                ax.imshow(images_np[i])
-                class_idx = np.argmax(labels_np[i])
-                class_name = config.SEVERITY_CLASS_NAMES[class_idx]
-                ax.set_title(f'Class: {class_name}', fontsize=10)
-                ax.axis('off')
-        
-        plt.tight_layout()
-        return fig
-
-
-def visualize_augmentation(generator, num_augmentations=5):
-    # Get one batch
-    images, labels = next(generator)
-    image = images[0]
-    class_idx = np.argmax(labels[0])
-    class_name = config.SEVERITY_CLASS_NAMES[class_idx]
-    
-    fig, axes = plt.subplots(1, num_augmentations, figsize=(20, 4))
-    fig.suptitle(f'Data Augmentation Examples - Class: {class_name}', fontsize=14)
-    
-    for i in range(num_augmentations):
-        if i == 0:
-            axes[i].imshow(image)
-            axes[i].set_title('Original')
-        else:
-            # Get another augmented version
-            images_aug, _ = next(generator)
-            axes[i].imshow(images_aug[0])
-            axes[i].set_title(f'Augmented {i}')
-        axes[i].axis('off')
+        for j, img_path in enumerate(images):
+            img = Image.open(img_path)
+            if len(folders) == 1:
+                ax = axes[j]
+            else:
+                ax = axes[i, j]
+            ax.imshow(img)
+            ax.axis('off')
+            if j == 0:
+                ax.set_title(f'{class_name}', fontsize=14, fontweight='bold')
     
     plt.tight_layout()
     return fig
+
+
+def load_image(img_path, img_size=IMG_SIZE):
+    img = tf.keras.preprocessing.image.load_img(img_path, target_size=(img_size, img_size))
+    img_array = tf.keras.preprocessing.image.img_to_array(img)
+    img_array = img_array / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
+    
+    return img_array

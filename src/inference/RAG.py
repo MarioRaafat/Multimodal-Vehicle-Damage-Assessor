@@ -4,11 +4,20 @@ import json
 import google.generativeai as genai
 from groq import Groq
 from xhtml2pdf import pisa
+from dotenv import load_dotenv
+
+# Load environment variables from the .env file
+load_dotenv()
 
 # --- CONFIGURATION ---
-SERPER_API_KEY = "0f0678396df38b459ec2446b7680784f92d33837"
-GEMINI_API_KEY = "AIzaSyDR_e5kOoAsdWvgSkYURpjWk6wLMZ_GGhI"
-GROQ_API_KEY = "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"
+# Now we fetch them securely from the environment
+SERPER_API_KEY = os.getenv("SERPER_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Check if keys are missing (Optional safety step)
+if not all([SERPER_API_KEY, GEMINI_API_KEY, GROQ_API_KEY]):
+    raise ValueError("Error: Missing API keys. Please check your .env file.")
 
 
 # --- 1. REASONING LAYER (DeepSeek R1 via Groq) ---

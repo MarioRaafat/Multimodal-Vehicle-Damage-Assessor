@@ -1,0 +1,9 @@
+streamlit
+numpy
+Pillow
+ultralytics
+opencv-python-headless
+supervision
+requests
+google-generativeai
+xhtml2pdf

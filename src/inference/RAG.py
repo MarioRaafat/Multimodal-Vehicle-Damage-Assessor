@@ -114,6 +114,3 @@ def main():
     pdf_filename = "damage_report.pdf"
     convert_html_to_pdf(html_content, pdf_filename)
 
-
-if __name__ == "__main__":
-    main()

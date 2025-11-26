@@ -1,20 +1,93 @@
 import requests
 import os
-import google.generativeai as genai  # <--- CHANGED: Google AI Library
+import json
+import google.generativeai as genai
+from groq import Groq  # <--- Needed for DeepSeek R1
 from xhtml2pdf import pisa
-
 
 # --- CONFIGURATION ---
 SERPER_API_KEY = "0f0678396df38b459ec2446b7680784f92d33837"
-# You need a Google API Key. Get it here: https://aistudio.google.com/app/apikey
-GEMINI_API_KEY = "AIzaSyDR_e5kOoAsdWvgSkYURpjWk6wLMZ_GGhI"
+GEMINI_API_KEY = "AIzaSyDR_e5kOoAsdWvgSkYURpjWk6wLMZ_GGhI"  # Put your actual key here
+GROQ_API_KEY = "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"  # Put your actual key here
 
-# --- HELPER FUNCTIONS ---
+
+# --- 1. REASONING LAYER (DeepSeek R1) ---
+
+def decide_repair_strategy(car_info, part_name, damage_type, severity, api_key):
+    """
+    Uses DeepSeek R1 to analyze damage and decide on Repair vs Replace.
+    Returns a dictionary with the decision, reasoning, and search query.
+    """
+    print("🧠 DeepSeek R1: Analyzing damage logic...")
+
+    client = Groq(api_key=api_key)
+
+    prompt = f"""
+    You are a Senior Automotive Adjuster. 
+    Analyze the following case to decide between REPAIR or REPLACE.
+
+    Vehicle: {car_info}
+    Part: {part_name}
+    Damage Type: {damage_type}
+    Severity: {severity}
+
+    Logic Rules:
+    1. Safety parts (glass, airbags, seatbelts) are ALWAYS replace.
+    2. Severe structural damage (frame) is replace.
+    3. Minor cosmetic damage (dents, scratches) on metal/plastic is repair.
+    4. Complex electronics (headlights with cracked lens) are usually replace.
+
+    Task:
+    1. Make a decision: "Repair" or "Replace".
+    2. Write a short reasoning (1 sentence).
+    3. Generate a highly optimized Google Search Query for Egypt.
+       - If Replace: Search for "{part_name} price {car_info} Egypt"
+       - If Repair: Search for "{part_name} repair cost {car_info} Egypt" or "body shop prices"
+
+    OUTPUT FORMAT:
+    Return ONLY a raw JSON object (no markdown, no ```json tags).
+    {{
+        "decision": "Replace",
+        "reasoning": "Headlight lenses cannot be safely resealed after shattering.",
+        "search_query": "Toyota Corolla 2022 headlight assembly price Egypt"
+    }}
+    """
+
+    try:
+        # We use the deepseek-r1 model hosted on Groq
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1  # Low temp for logical consistency
+        )
+
+        content = response.choices[0].message.content
+
+        # Cleanup: Remove <think> tags if DeepSeek includes them in the output
+        if "</think>" in content:
+            content = content.split("</think>")[-1].strip()
+
+        # Cleanup: Remove markdown code blocks if present
+        content = content.replace("```json", "").replace("```", "").strip()
+
+        return json.loads(content)
+
+    except Exception as e:
+        print(f"❌ Error in Reasoning Layer: {e}")
+        # Fallback default
+        return {
+            "decision": "Check Manual",
+            "reasoning": "AI Failed",
+            "search_query": f"{car_info} {part_name} price Egypt"
+        }
+
+
+# --- 2. SEARCH LAYER ---
 
 def search_web(query, api_key):
     print(f"🔍 Searching web for: {query}...")
     url = "https://google.serper.dev/search"
-    payload = {"q": query, "num": 10}
+    payload = {"q": query, "num": 8}  # Reduced num slightly for speed
     headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
 
     try:
@@ -26,39 +99,45 @@ def search_web(query, api_key):
         return None
 
 
-def generate_html_content(search_results, api_key):
-    """
-    Asks Gemini 1.5 Flash to generate a styled HTML report.
-    """
-    print("🤖 Generating HTML report with Gemini 2.5 Flash...")
+# --- 3. REPORT LAYER (Gemini) ---
 
-    # Configure the Google AI Client
+def generate_final_report(strategy_data, search_results, api_key):
+    """
+    Uses Gemini to synthesize the DeepSeek decision + Google Results into a PDF.
+    """
+    print("🤖 Gemini 2.5: Writing final report...")
+
     try:
         genai.configure(api_key=api_key)
+        # Note: 'gemini-1.5-flash' is the correct stable model name
         model = genai.GenerativeModel('gemini-2.5-flash')
 
-        # Prompt logic
         prompt = f"""
         You are an expert auto repair estimator.
 
-        Here are the search results for car parts:
+        CASE DETAILS:
+        - Decision: {strategy_data['decision']}
+        - Logic: {strategy_data['reasoning']}
+
+        MARKET DATA (Search Results):
         {search_results}
 
         Task:
-        1. Extract ALL price mentions.
-        2. Convert them to EGP (Egyptian Pounds) if needed.
-        3. Compute min, max, and average prices.
-        4. Create a clean, professional HTML report.
+        Generate a professional HTML repair estimate report.
 
-        Requirements:
-        - Use standard HTML5.
-        - Include <style> tags to make it look professional (use fonts, colors, tables).
-        - The table should have borders and padding.
-        - Highlight the "Recommended Action" in bold/color.
-        - RETURN ONLY THE HTML CODE. Start with <!DOCTYPE html> and end with </html>.
+        Structure:
+        1. **Assessment**: State clearly that the recommendation is to {strategy_data['decision']} and why.
+        2. **Cost Analysis**: Extract prices from search results. Convert to EGP. Calculate Min/Max/Avg.
+        3. **Recommendation**: Final advice for the user.
+
+        Styling Requirements:
+        - Use standard HTML5 with internal CSS.
+        - Font: Helvetica or Arial.
+        - Use a color scheme of Navy Blue and White.
+        - Render the "Decision" (Repair/Replace) in a large, colored badge (Red for Replace, Green for Repair).
+        - RETURN ONLY RAW HTML.
         """
 
-        # Generate content
         response = model.generate_content(prompt)
         return response.text
 
@@ -67,50 +146,57 @@ def generate_html_content(search_results, api_key):
         return None
 
 
-def convert_html_to_pdf(source_html, output_filename):
-    """
-    Converts HTML string to PDF file using xhtml2pdf.
-    """
-    print(f"⚙️ Converting HTML to PDF: {output_filename}...")
+# --- 4. PDF CONVERSION ---
 
+def convert_html_to_pdf(source_html, output_filename):
+    print(f"⚙️ Converting Report to PDF...")
     try:
-        # Open file in binary write mode
         with open(output_filename, "wb") as result_file:
-            # pisa.CreatePDF parses the HTML and writes to the file
             pisa_status = pisa.CreatePDF(source_html, dest=result_file)
 
-        if pisa_status.err:
-            print("❌ Error during PDF conversion.")
-        else:
+        if not pisa_status.err:
             print(f"✅ Success! PDF saved as: {os.path.abspath(output_filename)}")
-
+        else:
+            print("❌ Error during PDF conversion.")
     except Exception as e:
         print(f"❌ File Error: {e}")
 
 
-# --- MAIN EXECUTION ---
+# --- MAIN ORCHESTRATOR ---
 
 def main():
-    # 1. Define query
-    query_item = "Toyota Corolla headlight"
-    query = f"{query_item} price Egypt"
+    # --- INPUTS (These would come from your Streamlit App or YOLO model) ---
+    car_info = "Toyota Corolla 2022"
+    part_name = "Front Bumper"
+    damage_type = "Deep Dent with Paint Scratch"
+    severity = "Moderate"
+    # Try changing severity to "Severe/Cracked" to see the logic change!
 
-    # 2. Search
-    results = search_web(query, SERPER_API_KEY)
+    print(f"🚗 Processing Case: {car_info} | {part_name} | {severity}")
+
+    # STEP 1: DeepSeek decides Strategy & Query
+    strategy = decide_repair_strategy(
+        car_info, part_name, damage_type, severity, GROQ_API_KEY
+    )
+    print(f"👉 Strategy: {strategy['decision']} ({strategy['reasoning']})")
+
+    # STEP 2: Search using the OPTIMIZED query
+    results = search_web(strategy['search_query'], SERPER_API_KEY)
     if not results: return
 
-    # 3. Generate HTML with Gemini
-    # Note: Make sure to pass the GEMINI_API_KEY here
-    html_content = generate_html_content(results, GEMINI_API_KEY)
+    # STEP 3: Gemini writes the report
+    html_content = generate_final_report(strategy, results, GEMINI_API_KEY)
     if not html_content: return
 
-    # Cleanup: Gemini usually wraps code in markdown blocks. We remove them.
+    # Cleanup HTML markdown
     if "```html" in html_content:
         html_content = html_content.split("```html")[1].split("```")[0]
     elif "```" in html_content:
         html_content = html_content.split("```")[1].split("```")[0]
 
-    # 4. Convert to PDF
-    pdf_filename = "damage_report.pdf"
-    convert_html_to_pdf(html_content, pdf_filename)
+    # STEP 4: Convert to PDF
+    convert_html_to_pdf(html_content, "smart_damage_report.pdf")
 
+
+if __name__ == "__main__":
+    main()

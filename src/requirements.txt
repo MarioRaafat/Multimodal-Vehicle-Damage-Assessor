@@ -6,4 +6,6 @@ opencv-python-headless
 supervision
 requests
 google-generativeai
+groq
 xhtml2pdf
+python-dotenv

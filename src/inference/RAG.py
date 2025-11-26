@@ -171,6 +171,7 @@ def convert_html_to_pdf(source_html, output_filename):
 def process_full_case(car_info, parts_list):
     """
     Iterates through all parts, gathers data, and generates one report.
+    Accepts parts_list from pipeline: list of dicts with keys 'damage_type', 'part_name', 'severity'
     """
 
     # This list will store the full bundle of data for every part
@@ -181,9 +182,10 @@ def process_full_case(car_info, parts_list):
 
     # --- LOOP THROUGH EACH PART ---
     for part in parts_list:
-        part_name = part['name']
-        damage_type = part['damage']
-        severity = part['severity']
+        # Accept both old format {'name','damage','severity'} and new pipeline format {'part_name','damage_type','severity'}
+        part_name = part.get('part_name') or part.get('name', 'Unknown Part')
+        damage_type = part.get('damage_type') or part.get('damage', 'Unknown Damage')
+        severity = part.get('severity', 'Unknown')
 
         print(f"\n--- Processing Part: {part_name} ---")
 
@@ -216,8 +218,11 @@ def process_full_case(car_info, parts_list):
             html_content = html_content.split("```html")[1].split("```")[0]
         elif "```" in html_content:
             html_content = html_content.split("```")[1].split("```")[0]
-
-        convert_html_to_pdf(html_content, "full_damage_report.pdf")
+        pdf_path = "reports/full_damage_report.pdf"
+        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+        convert_html_to_pdf(html_content, pdf_path)
+    else:
+        print("❌ Failed to generate report HTML.")
 
 
 # --- MAIN EXECUTION ---

@@ -1,6 +1,13 @@
 import streamlit as st
 from PIL import Image
-# from model_inference import load_model, predict_damage_cost
+import os
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import from pipelines
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from pipelines.inference_pipeline import inference_pipeline
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -64,24 +71,53 @@ if uploaded_file is not None:
         st.image(image, caption='Uploaded Image', use_column_width=True)
 
     with col2:
-        st.subheader("Estimation")
+        st.subheader("Analysis & Report")
 
         # Button to trigger prediction
-        if st.button("Calculate Repair Cost", type="primary"):
+        if st.button("Generate Damage Report", type="primary"):
             # Organize input data
-            car_info = {
-                "make": selected_make,
-                "model": selected_model,
-                "year": selected_year
-            }
+            car_info_str = f"{selected_make} {selected_model} {selected_year}"
 
-            with st.spinner('Analyzing damage patterns...'):
-                # Call the function from our other file
-                # cost = predict_damage_cost(model, image, car_info)
-                cost = 500
+            # Save uploaded image temporarily
+            temp_dir = "temp_uploads"
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_image_path = os.path.join(temp_dir, uploaded_file.name)
+            
+            with open(temp_image_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
 
-            # Display Result
-            st.success("Analysis Complete!")
-            st.metric(label="Estimated Repair Cost", value=f"${cost}")
-
-            st.info(f"Note: This estimate is for a {selected_year} {selected_make} {selected_model}.")
+            with st.spinner('🔍 Analyzing damage... This may take a few moments...'):
+                try:
+                    # Run the full inference pipeline
+                    pdf_path = inference_pipeline([temp_image_path], car_info_str)
+                    
+                    if pdf_path and os.path.exists(pdf_path):
+                        st.success("✅ Analysis Complete!")
+                        
+                        # Provide download button for PDF
+                        with open(pdf_path, "rb") as pdf_file:
+                            pdf_bytes = pdf_file.read()
+                            
+                        st.download_button(
+                            label="📄 Download Full Damage Report (PDF)",
+                            data=pdf_bytes,
+                            file_name=f"damage_report_{selected_make}_{selected_model}_{selected_year}.pdf",
+                            mime="application/pdf"
+                        )
+                        
+                        st.info(f"Report generated for: {car_info_str}")
+                        st.balloons()
+                    else:
+                        st.error("❌ No damage detected or report generation failed.")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error during analysis: {str(e)}")
+                    st.exception(e)
+                
+                finally:
+                    # Cleanup temp file
+                    if os.path.exists(temp_image_path):
+                        try:
+                            os.remove(temp_image_path)
+                        except:
+                            pass

@@ -486,7 +486,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 🙏 Acknowledgments
+## � Team Members
+
+| Name | GitHub |
+|------|--------|
+| Kareem Taha | [@kareemtaha3](https://github.com/kareemtaha3) |
+| Filo Emad | [@FiloEmad](https://github.com/FiloEmad) |
+| Mario Raafat | [@MarioRaafat](https://github.com/MarioRaafat) |
+
+---
+
+## �🙏 Acknowledgments
 
 - [Ultralytics](https://ultralytics.com/) for YOLO models
 - [Roboflow](https://roboflow.com/) for training datasets

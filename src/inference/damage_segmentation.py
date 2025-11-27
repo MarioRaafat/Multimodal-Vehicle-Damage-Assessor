@@ -55,11 +55,17 @@ def segment_damage(image_paths :list,min_confidence:float=.2,min_size = 256,padd
         min_confidence (float): Minimum confidence threshold for detections.
         min_size (int): Minimum size for the cropped damage images.
         padding (float): Padding percentage around detected damage boxes.
-        output_dir (str): Directory to save the cropped damage images.  
+        output_dir (str): Directory to save the cropped damage images.
+    Returns:
+        images_list (list(str)): cropped images paths.
+        labels (dict[str]): dictionary where each key is the cropped image path and the value is a metadata dict:
+            {'damage type': str, 'confidence': float,'source' : str, , 'index': int}  
     """
     os.makedirs(output_dir, exist_ok=True)
     model = load_model()
     Damage_Classes = model.names
+    images_list = []
+    labels = {}
     for image_path in image_paths:
         img_bgr = cv2.imread(image_path)
         if img_bgr is None:
@@ -74,7 +80,12 @@ def segment_damage(image_paths :list,min_confidence:float=.2,min_size = 256,padd
         detections = sv.Detections.from_ultralytics(results)
 
         if len(detections) == 0:
-            print(f"No damage detected in {os.path.basename(image_path)}.")
+            labels[image_path] = {
+                'damage_type': "no damage detected",
+                'confidence': 0.0,
+                'source': image_path,
+                'index': -1
+            }
             continue
 
         for idx in range(len(detections)):
@@ -111,3 +122,12 @@ def segment_damage(image_paths :list,min_confidence:float=.2,min_size = 256,padd
             base = os.path.splitext(os.path.basename(image_path))[0]
             crop_filename = os.path.join(output_dir, f"{base}_{damage}_{conf:.2f}_{idx:04d}.jpg")
             cv2.imwrite(crop_filename, cv2.cvtColor(crop_resized, cv2.COLOR_RGB2BGR))
+
+            images_list.append(crop_filename)
+            labels[crop_filename] = {
+                'damage_type': damage,
+                'confidence': conf,
+                'source': image_path,
+                'index': idx
+            }
+    return images_list, labels

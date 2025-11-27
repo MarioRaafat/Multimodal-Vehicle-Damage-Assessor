@@ -127,12 +127,22 @@ class DamageSeverityDetector:
         if probs is None:
             return "No damage detected"
 
-        probs_array = probs.cpu().numpy() if hasattr(probs, 'cpu') else probs.data.cpu().numpy()
-        max_idx = probs_array.top1
-        class_names = self.model.names
-        highest_severity = class_names[max_idx]
+        try:
+            # support torch tensors and numpy arrays
+            if hasattr(probs, 'cpu'):
+                arr = probs.cpu().numpy()
+            else:
+                arr = np.array(probs)
 
-        return highest_severity
+            # flatten to 1D and take argmax
+            arr = arr.ravel()
+            max_idx = int(np.argmax(arr)) if arr.size > 0 else None
+            class_names = self.model.names
+            if max_idx is None or max_idx < 0 or max_idx >= len(class_names):
+                return "No damage detected"
+            return class_names[max_idx]
+        except Exception:
+            return "No damage detected"
     
     def batch_detect(
         self,
@@ -140,9 +150,17 @@ class DamageSeverityDetector:
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,
         imgsz: int = 640
-    ) -> List[Dict]:
-        results = []
+    ) -> Dict[str, Dict]:
+        """
+        Run detect_severity_level on a batch of image sources and return a mapping
+        keyed by the image source (string) to the result dict for that image.
+
+        Returns:
+            Dict[str, Dict]: { image_source_str: result_dict }
+        """
+        results = {}
         for image_source in image_sources:
+            key = str(image_source)
             try:
                 result = self.detect_severity_level(
                     image_source,
@@ -150,11 +168,11 @@ class DamageSeverityDetector:
                     iou_threshold=iou_threshold,
                     imgsz=imgsz
                 )
-                results.append(result)
+                results[key] = result
             except Exception as e:
-                print(f"Error processing image: {e}")
-                results.append({'error': str(e)})
-        
+                print(f"Error processing image {key}: {e}")
+                results[key] = {'error': str(e)}
+
         return results
     
 
@@ -169,19 +187,21 @@ if __name__ == "__main__":
         image_paths.extend(list(imgs_dir.glob(ext)))
 
     results = model_class.batch_detect([str(img_path) for img_path in image_paths])
-    
-    # Display results for each image
-    for img_path, result in zip(image_paths, results):
+
+    # Display results for each image using the returned dict keyed by image path
+    for img_path in image_paths:
+        key = str(img_path)
+        result = results.get(key, {'error': 'no result'})
         if 'error' in result:
             print(f"\n{img_path.name}: Error - {result['error']}")
             continue
 
         cv2.imshow(f"Severity Detection - {img_path.name}", result['annotated_image'])
 
-        key = cv2.waitKey(0)
-        if key == ord('q'):
+        key_press = cv2.waitKey(0)
+        if key_press == ord('q'):
             break
-        
+
         cv2.destroyAllWindows()
-    
+
     cv2.destroyAllWindows()

@@ -1,6 +1,13 @@
 import streamlit as st
 from PIL import Image
-# from model_inference import load_model, predict_damage_cost
+import os
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import from pipelines
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from pipelines.inference_pipeline import inference_pipeline
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -50,38 +57,76 @@ selected_model = st.sidebar.selectbox("Select Model", available_models)
 selected_year = st.sidebar.selectbox("Select Year", car_years, index=len(car_years) - 1)
 
 # --- Main Area: Image Upload ---
-st.header("Step 2: Upload Image")
-uploaded_file = st.file_uploader("Choose an image of the damage...", type=["jpg", "jpeg", "png"])
+st.header("Step 2: Upload Images")
+uploaded_files = st.file_uploader(
+    "Choose images of the damage (select one or multiple)...", 
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
+)
 
-if uploaded_file is not None:
-    # 1. Display the image
-    image = Image.open(uploaded_file)
+if uploaded_files:
+    # Display all uploaded images in a gallery
+    st.subheader("📸 Uploaded Images")
+    cols = st.columns(min(3, len(uploaded_files)))
+    for idx, file in enumerate(uploaded_files):
+        with cols[idx % 3]:
+            image = Image.open(file)
+            st.image(image, caption=file.name, use_column_width=True)
+    
+    st.divider()
+    
+    # Analysis section
+    st.subheader("Analysis & Report")
+    
+    # Button to trigger prediction
+    if st.button("Generate Damage Report", type="primary"):
+        # Organize input data
+        car_info_str = f"{selected_make} {selected_model} {selected_year}"
 
-    # Create two columns: one for image, one for results
-    col1, col2 = st.columns(2)
+        # Save uploaded images temporarily
+        temp_dir = "temp_uploads"
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_image_paths = []
+        
+        for file in uploaded_files:
+            temp_image_path = os.path.join(temp_dir, file.name)
+            with open(temp_image_path, "wb") as f:
+                f.write(file.getbuffer())
+            temp_image_paths.append(temp_image_path)
 
-    with col1:
-        st.image(image, caption='Uploaded Image', use_column_width=True)
-
-    with col2:
-        st.subheader("Estimation")
-
-        # Button to trigger prediction
-        if st.button("Calculate Repair Cost", type="primary"):
-            # Organize input data
-            car_info = {
-                "make": selected_make,
-                "model": selected_model,
-                "year": selected_year
-            }
-
-            with st.spinner('Analyzing damage patterns...'):
-                # Call the function from our other file
-                # cost = predict_damage_cost(model, image, car_info)
-                cost = 500
-
-            # Display Result
-            st.success("Analysis Complete!")
-            st.metric(label="Estimated Repair Cost", value=f"${cost}")
-
-            st.info(f"Note: This estimate is for a {selected_year} {selected_make} {selected_model}.")
+        with st.spinner('🔍 Analyzing damage... This may take a few moments...'):
+            try:
+                # Run the full inference pipeline with all images
+                pdf_path = inference_pipeline(temp_image_paths, car_info_str)
+                
+                if pdf_path and os.path.exists(pdf_path):
+                    st.success("✅ Analysis Complete!")
+                    
+                    # Provide download button for PDF
+                    with open(pdf_path, "rb") as pdf_file:
+                        pdf_bytes = pdf_file.read()
+                        
+                    st.download_button(
+                        label="📄 Download Full Damage Report (PDF)",
+                        data=pdf_bytes,
+                        file_name=f"damage_report_{selected_make}_{selected_model}_{selected_year}.pdf",
+                        mime="application/pdf"
+                    )
+                    
+                    st.info(f"✔️ Report generated for: {car_info_str}\n📊 Images analyzed: {len(uploaded_files)}")
+                    st.balloons()
+                else:
+                    st.error("❌ No damage detected in any images or report generation failed.")
+                    
+            except Exception as e:
+                st.error(f"❌ Error during analysis: {str(e)}")
+                st.exception(e)
+            
+            finally:
+                # Cleanup temp files
+                for temp_path in temp_image_paths:
+                    if os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except:
+                            pass

@@ -85,7 +85,7 @@ def decide_repair_strategy(car_info, part_name, damage_type, severity, api_key):
 def search_web(query, api_key):
     print(f"🔍 Searching web for: {query}...")
     url = "https://google.serper.dev/search"
-    payload = {"q": query, "num": 5}  # Limit to 5 results per part to keep it fast
+    payload = {"q": query, "num": 10}  # Limit to 5 results per part to keep it fast
     headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
 
     try:
@@ -114,7 +114,7 @@ def generate_final_report(car_info, all_parts_data, api_key):
         data_str = json.dumps(all_parts_data, indent=2)
 
         prompt = f"""
-        You are an expert auto repair estimator.
+        You are an expert auto repair estimator and writing professional HTML reports .
 
         VEHICLE: {car_info}
 
@@ -173,6 +173,9 @@ def process_full_case(car_info, parts_list):
     Iterates through all parts, gathers data, and generates one report.
     Accepts parts_list from pipeline: list of dicts with keys 'damage_type', 'part_name', 'severity'
     """
+
+    print(car_info)
+    print(parts_list)
 
     # This list will store the full bundle of data for every part
     full_case_data = []

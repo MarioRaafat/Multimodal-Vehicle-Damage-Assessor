@@ -16,7 +16,7 @@ def inference_pipeline(image_paths :list,car_info: str):
 
     # 1. Segment Damage
     print("Starting Damage Segmentation...")
-    cropped_image_paths, damage_labels = segment_damage(image_paths, min_confidence=0.25)
+    cropped_image_paths, damage_labels = segment_damage(image_paths, min_confidence=0.25, min_size = 256,padding =.5)
 
     if not cropped_image_paths:
         print("No damage detected in any images. Exiting pipeline.")
